@@ -221,6 +221,7 @@ C-8-20_data_deeper_than_the_native_stack.py
 C-8-21_the_stack_a_program_is_given.py
 C-8-22_the_import_systems_frames.py
 C-8-23_sys_path_written.py
+C-8-24_a_programs_own_staged_texts.py
 C-9-01_cyclic_disposal_order.py
 C-9-02_cyclic_resurrection.py
 C-9-03_refcount_disposal_order.py
@@ -235,6 +236,7 @@ C-9-11_a_traceback_keeps_its_frames_locals.py
 C-9-12_a_kept_frame_keeps_its_caller.py
 C-9-13_the_steps_of_the_exit.py
 C-9-14_when_a_module_dies.py
+X-4-01_eval_rejected.py
 X-4-02_set_lazy_imports_rejected.py
 X-4-03_second_builtin_module_rejected.py
 X-4-04_meta_path_rejected.py

@@ -197,9 +197,10 @@ call it.
   establish. Spec v0.10 section 8 keeps the input rule for layouts. This prototype uses none,
   and the layout obligation stays open (`TODO.md`).
 * **Scaffolding**, which belongs to the model and not to the contract:
-  * The model does not reject what the compiler rejects at build time. A program's own `exec`
-    or `eval` is E-01 there; in the model only the runtime half shows. A staged `compile`'s code
-    object may run anywhere, since it needs no compiler.
+  * A program's own `exec`, `eval` and `compile` are staged as the standard library's are (spec
+    v0.52, Question 57): a text its module bodies generate runs the compiled code, and a text no
+    dry run staged is E-01 at run time, in the model as in a compiled program. A staged
+    `compile`'s code object may run anywhere, since it needs no compiler.
   * The import system and `traceback`'s caret parsing keep the real `exec`/`compile`.
   * An entry point is found through `annotate.__code__`, which in Bella is attached by the
     compiler.

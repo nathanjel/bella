@@ -762,12 +762,18 @@ author has seen the measurement. In this order:
 * ~~**A str subclass with methods of its own as a name** (RL-1099, with RL-954 and RL-955).~~ Question 52, answered A on
   2026-11-27: an import by such a name stops (E-04, spec v0.47); RL-954 is excluded, and RL-955 is the import text's
   difference from CPython's, with Question 48 (below).
+* **Section 4's compile-time refusals** (RL-1102, 2026-11-28): what the compiler sees of E-02 to E-04 in the program's
+  own text (`sys.set_lazy_imports(...)`, `sys.meta_path.insert(...)`, `importlib.reload(...)`, `sys._getframe()`) is to
+  be a compile-time error with the id, as section 4 says; today only E-06's text is, and the rest stop at run time
+  (X-4-02 to X-4-04 pass on that). With `bella-lint`, or a check in the front end before it. Beside it, the eval legs:
+  eval1 and eval2 do not run a program's own dry run, so they refuse its staged texts (C-8-24 passes compiled only).
 * **The other defects**, each with a sweep of its class kept as a test (RL-1037, RL-1044, RL-1054, RL-1060, RL-1075, RL-965,
   RL-992, RL-1048, RL-1050, RL-1052, RL-1012, RL-1025, RL-1043, RL-1065 to RL-1068, RL-1094, RL-1058 and RL-1063 done 2026-11-27,
   RL-1013 with RL-1102 part 1 (Question 54, answered A on 2026-11-28: writes to `sys.modules` \[P1\], a second module
   object of a built-in module stops, E-04, spec v0.50), RL-1102's `sys.meta_path` (Question 55, answered A: an import that
   would search a changed list stops) and `sys.path` (Question 56, answered B: writes \[P1\], the live list searched,
-  spec v0.51), its rest (a program's own staged `eval`, Question 57; its stops' words fixed), RL-1040 and
+  spec v0.51) and a program's own staged `eval` (Question 57, answered B: E-01 narrowed to a text the dry run did not
+  stage, spec v0.52; its stops' words fixed), RL-1040 and
   RL-1049 to the author; RL-1053, RL-1057, RL-1059 and RL-1062 with the steps before): ~~RL-1037 (`fromhex` on a subclass)~~, RL-1043 (a class
   with no MRO as a base), RL-1044 (`__firstlineno__` after `__module__` is assigned), RL-1052 (`dir(x)` and a name's
   `__lt__`), RL-1053 (`__qualname__` inside a generator expression), RL-1054 (`repr` of a class without a module),
