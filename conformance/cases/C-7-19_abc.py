@@ -6,7 +6,7 @@
 drops, virtual subclasses, the hook, and when the caches answer without asking the hook again.
 The token's value depends on what else has registered, so only its changes are shown. The registry
 and the two caches hold weak references, each with a callback that would take it out of its set;
-a look-up makes a reference of its own, so a metaclass's __hash__ and __eq__ run at each one."""
+a class's reference is made once, so a metaclass's __hash__ runs at the first look-up, __eq__ at each."""
 # ruff: noqa: B024  # ABCs with no abstract method are what this case is about
 import _abc  # type: ignore[import-not-found]
 import abc

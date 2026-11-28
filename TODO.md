@@ -762,6 +762,11 @@ author has seen the measurement. In this order:
 * ~~**A str subclass with methods of its own as a name** (RL-1099, with RL-954 and RL-955).~~ Question 52, answered A on
   2026-11-27: an import by such a name stops (E-04, spec v0.47); RL-954 is excluded, and RL-955 is the import text's
   difference from CPython's, with Question 48 (below).
+* **`sys`'s and `builtins`' namespaces in CPython's order (RL-1061, RL-492).** RL-951 put every native module's names
+  in CPython's order (`order_as_cpython`), but `sys` and `builtins` are handed out before it runs: `sys.__dir__()` has
+  CPython's 120 names with 113 in other places, `vars(sys)` 70 of them with 65 elsewhere (the other 50 are the
+  names-baseline's), and `builtins` differs too (RL-492); the F48 row `a45more` `native_direct` is in `OPEN` for it.
+  Order the two by CPython's tables, as the other native modules are, a case first.
 * **Promises stronger than CPython's** (the author's rule of 2026-11-28, Question 58): read the spec for a guarantee
   stronger than what CPython itself gives, in its documents and its behaviour (as "a complete collection" was: CPython
   leaves what its finalisers make to a later one), and word each as what a program may rely on when run uncompiled;
@@ -842,11 +847,15 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **Tuples of constants folded as CPython's compiler folds them (the author, Question 37, 2026-11-24: B; RL-623).** Case
   first, CPython passing, of identity and of the counts of objects made (`def pair(): return (11, 22)`, `pair() is
   pair()`; a nested tuple; `-1` and a folded operation inside one; `x in [1, 2]` and `for x in [1, 2]` as a tuple
-  constant, `x in {1, 2}` as a frozenset; the limits). Then a pass mirroring CPython 3.15.2's `Python/flowgraph.c`:
+  constant, `x in {1, 2}` as a frozenset; a folded NaN, `1e300 * 1e300 - 1e300 * 1e300`, whose `is`, `count`, `in`, `index`,
+  `remove`, dict and set lookups and list and tuple equality all take its identity: CPython prints `True 1 True 1` for
+  `f() is f(), [f()].count(f()), f() in [f()], len({f(), f()})`, compiled today `False 0 False 2`, RL-972; the limits). Then a pass mirroring CPython 3.15.2's `Python/flowgraph.c`:
   `fold_tuple_of_constants` (1529), `optimize_lists_and_sets` (1697), `fold_const_binop` and `fold_const_unaryop` (1946,
   2035) with their limits (`MAX_INT_SIZE` 128 bits, `MAX_COLLECTION_SIZE` 256, `MAX_STR_SIZE` 4096, `MAX_TOTAL_ITEMS`
   1024), the folded value a module constant (`K_n`, `init_constants()`), with its `PassSpec`. What folding gets wrong is
-  identity only and stays under D-03; an evaluation saves the tuple's allocation (measured).
+  identity only and stays under D-03, but for a NaN, where identity decides containment and the equality of containers,
+  so a NaN the pass does not fold as CPython's compiler does is a defect by D-03's own rule (RL-972); an evaluation saves
+  the tuple's allocation (measured).
 * **`TextIOWrapper.tell` after a seek: D-32 (the author, Question 31, 2026-11-24: A; RL-756; DECISIONS).** The cap
   stays (RL-347) and is registered; nothing to implement. To be reported upstream: see Housekeeping.
 * **Open from review A34:** the argument counts of every method of every type were swept on 2026-11-22
