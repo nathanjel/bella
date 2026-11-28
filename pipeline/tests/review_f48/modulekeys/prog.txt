@@ -1,0 +1,22 @@
+"""RL-1072: what a program stores in a built-in module's namespace under a key that is no str, finalised at the exit as
+CPython's is: _PyModule_ClearDict sets only the str keys' values to None, and the module's dict, freed with the module,
+lets go of the rest. Each row stores an object under an int key of one module and ends (a str key's value is let go of by
+the wiping, which other rows hold; one object a row, since the order among the exit's finalisers is D-07's)."""
+import importlib
+import os
+import sys
+from collections.abc import Callable
+
+
+class F:
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+
+    def __del__(self, w: Callable[[int, bytes], int] = os.write) -> None:
+        w(1, ("fin " + self.tag + "\n").encode())
+
+
+name = sys.argv[1]
+module = importlib.import_module(name)
+module.__dict__[1] = F("under an int key of " + name)
+os.write(1, b"end of program\n")

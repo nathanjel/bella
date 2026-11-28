@@ -3693,6 +3693,29 @@ std::unordered_map<Module*, Ref>& namespaces_at_start() {
     static std::unordered_map<Module*, Ref> kept;
     return kept;
 }
+// module_dealloc's release of the dict of a C module CPython frees after its wiping: the entries _PyModule_ClearDict leaves,
+// those whose key is no str, go with the dict, nothing compared (dict_dealloc). The module lives on here (D-19), so they are
+// taken out of it, each found by its index as dict_take_last finds an entry, so that no key's __eq__ or __hash__ runs; what
+// a value's finaliser does to the dict is read again at the next index (RL-1072)
+void release_other_keys(Dict* d) {
+    for (std::size_t ix = 0; ix < d->entries.size(); ++ix) {
+        if (d->entries[ix].key.is_unset() || as_str(d->entries[ix].key) != nullptr || d->indices.empty()) continue;
+        const std::size_t mask = d->indices.size() - 1;
+        auto perturb = static_cast<std::uint64_t>(d->entries[ix].hash);
+        std::size_t i = static_cast<std::size_t>(d->entries[ix].hash) & mask;
+        while (d->indices[i] != static_cast<std::int64_t>(ix)) {
+            perturb >>= 5;
+            i = (i * 5 + perturb + 1) & mask;
+        }
+        d->indices[i] = detail::DKIX_DUMMY;
+        Obj k = std::exchange(d->entries[ix].key, Obj{});
+        Obj v = std::exchange(d->entries[ix].value, Obj{});
+        --d->used;
+        ++d->version;
+        decref(k);
+        decref(v);
+    }
+}
 // _PyModule_ClearDict over such a namespace: in its two passes, each value that is not the one the program started with goes,
 // the runtime's own put back (a name it did not have is None, as CPython's is)
 void release_program_values(Dict* d, Dict* start) {
@@ -3777,6 +3800,7 @@ void finalize_at_exit(const std::unordered_set<Module*>& runtime_own, int& statu
         } else {                                 // a module of the program's, or one of CPython's C modules
             Ref held = (m->flags & IMMORTAL) ? Ref{} : Ref::share(Obj::of(m));
             if (m->holds_namespace) clear_module_dict(m->dict);
+            if (m->flags & IMMORTAL) release_other_keys(m->dict);   // what the module's dealloc would let go of (RL-1072)
         }
     }
     weaklist.clear();                            // Py_DECREF(weaklist)
