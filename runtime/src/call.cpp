@@ -4004,6 +4004,28 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
     }, &start);
 }
 namespace {
+// sys.meta_path's finders as the start made them. CPython's _find_spec reads sys.meta_path (_bootstrap.py:1142), raises
+// ImportError for None, and asks each finder of the list as it stands; the closed world's registry stands for these three,
+// so an import that would search a list the program changed stops by name (E-04, Question 55). A list put back as it was,
+// the same finders in their order, is the start's; None is CPython's ImportError, whoever set it (the exit does, RL-987)
+std::vector<Ref>& start_finders() {
+    static auto* finders = new std::vector<Ref>();   // held to the end of the process, never released by an exit's destructors
+    return *finders;
+}
+Ref i_bella_meta_path_is_none(Obj, Args a) {
+    positional_only(a, "_bella_meta_path_is_none", 0, 0);
+    const std::vector<Ref>& start = start_finders();
+    if (start.empty()) return Ref::steal(boolean(false));   // the start's own imports, before the list is made
+    Obj now = dict_get(native_modules()["sys"]->dict, Obj::of(intern("meta_path")));
+    if (now == None()) return Ref::steal(boolean(true));
+    bool same = !now.is_unset() && is_exact_list(now) && static_cast<List*>(now.object())->items.size() == start.size();
+    for (std::size_t i = 0; same && i < start.size(); ++i) same = static_cast<List*>(now.object())->items[i] == start[i].get();
+    if (!same)
+        throw NotImplemented("an import with sys.meta_path changed (import-system customisation: the closed world is resolved at "
+                             "build time, E-04)");
+    return Ref::steal(boolean(false));
+}
+
 int run_program(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
                 std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules) {
     int status = 0;
@@ -4146,7 +4168,7 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                     for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
                              {"_bella_find", i_bella_find}, {"_bella_exec", i_bella_exec},
                              {"_bella_is_builtin", i_bella_is_builtin}, {"_bella_plain_name", i_bella_plain_name},
-                             {"_bella_native_module", i_bella_native_module}, {"_bella_refuse", i_bella_refuse},
+                             {"_bella_native_module", i_bella_native_module}, {"_bella_refuse", i_bella_refuse}, {"_bella_meta_path_is_none", i_bella_meta_path_is_none},
                              {"_bella_import_warning", i_bella_import_warning}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes},
                              {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_ga_get", i_bella_ga_get}, {"_bella_caller_module", i_bella_caller_module},
                              {"_bella_structseq_finish", i_bella_structseq_finish}, {"_bella_structseq_make", i_bella_structseq_make}, {"_bella_pickle_layout", i_bella_pickle_layout}, {"_bella_slot_cells", i_bella_slot_cells}, {"_bella_no_tp_new", i_bella_no_tp_new},
@@ -4262,10 +4284,12 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                 external_body(external);         // bootstrap_external.py, now that int and str have their methods
                 // sys.meta_path: the finders the import system stands for, as CPython's _install and _install_external_importers
                 // list them; the closed world's registry does their search, and a program reads the list (importlib.invalidate_caches)
-                // but may not change it (E-04). sys.path_hooks stays absent: CPython's holds zipimport's class, which phase 1 lacks
+                // but may not change it (E-04: an import that would search a changed list stops, i_bella_meta_path_is_none).
+                // sys.path_hooks stays absent: CPython's holds zipimport's class, which phase 1 lacks
                 Ref finders = list_new({dict_get(bootstrap->dict, Obj::of(intern("BuiltinImporter"))), dict_get(bootstrap->dict, Obj::of(intern("FrozenImporter"))),
                                         dict_get(external->dict, Obj::of(intern("PathFinder")))});
                 put(sys->dict, "meta_path", finders.get());
+                for (Obj f : static_cast<List*>(finders.get().object())->items) start_finders().push_back(Ref::share(f));
             }
             for (ClassObject* c : builtin_types())    // every file's methods made, those that are slot wrappers say so
                 for (auto& [name, v] : c->attrs.items())

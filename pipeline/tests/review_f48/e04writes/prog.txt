@@ -38,6 +38,18 @@ elif row == "meta_clear":
 elif row == "meta_assign":
     sys.meta_path = []
     attempt("import")
+elif row == "meta_none":
+    sys.meta_path = None  # type: ignore[assignment]
+    attempt("import")
+elif row == "meta_restored":                     # the list put back as it was: the start's finders, in their order
+    kept = list(sys.meta_path)
+    sys.meta_path.insert(0, Finder())
+    sys.meta_path[:] = kept
+    attempt("import")
+elif row == "meta_loaded":                       # a module already in sys.modules: no finder is asked
+    include()
+    sys.meta_path.insert(0, Finder())
+    attempt("reimport")
 elif row == "path_clear":
     sys.path.clear()
     attempt("import")

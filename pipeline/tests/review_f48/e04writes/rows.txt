@@ -1,6 +1,9 @@
 meta_insert
 meta_clear
 meta_assign
+meta_none
+meta_restored
+meta_loaded
 path_clear
 path_assign
 path_insert

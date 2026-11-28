@@ -1623,8 +1623,8 @@ def _spec_from_compiled(name):
 
 def _find_spec(name, path, target=None):
     """Find a module's spec."""
-    # bella: the closed world's registry stands for sys.meta_path's finders (spec section 8)
-    if _bella_shutting_down():  # cpython: 1143
+    # bella: the closed world's registry stands for sys.meta_path's finders (spec section 8); a list changed stops (E-04)
+    if _bella_shutting_down() or _bella_meta_path_is_none():  # cpython: 1143
         # CPython: sys.meta_path is None once finalize_modules has begun
         raise ImportError("sys.meta_path is None, Python is likely shutting down")  # cpython: 1144
 

@@ -428,6 +428,7 @@ def _bootstrap(find: Any) -> Any:
     import _warnings  # noqa: PLC0415
     module.__dict__.update(_bella_find=find, _bella_is_builtin=lambda name, who=None: False, _bella_plain_name=lambda name: None, _bella_refuse=None, _bella_exec=None,
                            _bella_native_module=lambda name: sys.modules[name] if name in sys.modules else __import__(name),
+                           _bella_meta_path_is_none=lambda: False,
                            _bella_import_warning=None, _bella_set_lazy_attributes=None,
                            _imp=_imp, _warnings=_warnings,   # which _setup binds, as CPython's does
                            _bella_shutting_down=lambda: False, _bella_ga_get=object.__getattribute__, _bella_state_set=object.__setattr__,
