@@ -120,7 +120,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   agree; a full run before the claim. On the day: 21 of 1c's 28 modules agree, `secrets` differs by D-20. To do:
   * the `asyncio` and `socket` shims (the manifest: the import succeeds, the rest is \[P2+\]), which also unblocks `unittest`
     and `unittest.async_case`;
-  * `marshal` and `zipimport` (Question 33);
+  * ~~`marshal` and `zipimport` (Question 33)~~: \[P2+\] since 2026-11-28 (Question 61: A), decided for the sweep;
   * the 22 names of `sys` that no exclusion or \[P2+\] covers, each implemented or decided (`displayhook`, `breakpointhook`,
     `addaudithook`, `abi_info`, `getdlopenflags`, the REPL's hooks, the build's facts, remote debugging);
   * cases for t-strings, `secrets`, `uuid`, `unittest`'s runner and loader, `logging`'s handlers and formatters;
@@ -917,31 +917,30 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   the frames table that were off are CPython's (RL-1058, RL-1063, 2026-11-27: each rewritten line states its line, and the tool
   fails on one that does not). Left: the four source loaders, which live in the first
   prelude and belong to the second module.
-* **`marshal` (the author, Question 33, 2026-11-24: A; D-31).** A port of `Python/marshal.c` for every type but code
-  objects, which stop by name (E-02): `loads` and `load` exact, `dumps` and `dump` exact at version 2 and below, and at
-  version 3 and above (the default, 6) an object's reference flag set by the runtime's own count where CPython's `w_ref` reads
-  CPython's, so the bytes may differ, length included, and a set `loads` returns may iterate in another order (D-31 as
-  corrected on 2026-11-28, Question 60: B).
-  A case first, with the rows measured on the day (a global, a temporary, a local, a literal inside a list, an object held
-  twice; `pipeline`'s own shape of the case: a row a process, the bytes printed), then the port; D-31's lint rule in
-  `bella-lint` when it is written. The question's text had `marshal.dumps((1, 'a'))` as `a902e9…` with a flag on the tuple:
-  measured on 3.15.2 it is `2902e901000000da0161`, the tuple unflagged (3.15 borrows a constant's reference), and the version
-  is 6.
-* **`zipimport` (the author, Question 34, 2026-11-24: A; spec v0.31).** CPython's `Lib/zipimport.py` compiled with the
-  program, as the import system's own modules are (the build compiles one more frozen module; its tracebacks name
-  `<frozen zipimport>` as CPython's do). The reading half runs as CPython's code: `zipimporter`, `get_data`, `is_package`,
-  `get_source`, `get_filename`, `find_spec`, `get_resource_reader`, `invalidate_caches`, `ZipImportError`; `get_code`,
-  `exec_module` and `load_module` stop by name (E-01 for a source, E-02 for a `.pyc`'s code object), a zstd member as
-  \[P2+\]; an archive on `sys.path` stays E-04. After `marshal` (it imports `marshal` at its top). A case first: the rows
-  measured on the day (`get_data`, `is_package`, `get_source`, `find_spec`'s name and loader) and a stop row for `get_code`;
-  the archive written by the case's own bytes, since `zipfile` is \[P2+\].
-* **Two modules of the manifest that cannot be imported (the sweep of 2026-11-22; toward increment 1c).** `marshal` (a core
-  module: `dumps`, `loads`, `dump`, `load`, `version`; a port of `Python/marshal.c` for the types that are not code objects,
-  and a stop by name for those) and `zipimport` (CPython's `Lib/zipimport.py`, frozen: compile it with the program as the
-  import system's two modules are, or a stop where a zip archive is on `sys.path`). The sweep itself is one program a module
-  (every public name with its type, its module and whether it is callable): 104 of 118 agree; the others are decided
-  (D-20's five, the import system's four listings, `unittest`'s asyncio test case, `builtins`' `aiter` and `anext`) or
-  names of `sys` not provided yet (50, most of them CPython's internals: each wants a decision or an implementation).
+* **`marshal` and `zipimport`, \[P2+\] (the author, Question 61, 2026-11-28: A; \[P1\] ports by Questions 33 and 34 of
+  2026-11-24).** Nothing phase 1 compiles, no package of the venv and no target uses them (RL-1095); they wait for a program
+  that needs them, and an import of either stops by name as any module the build does not compile does. The plan, kept:
+  * `marshal`: a port of `Python/marshal.c` for every type but code objects, which stop by name (E-02); `loads` and `load`
+    exact, `dumps` and `dump` exact at version 2 and below, and at version 3 and above (the default, 6) an object's
+    reference flag set by the runtime's own count where CPython's `w_ref` reads CPython's, so the bytes may differ, length
+    included, and a set `loads` returns may iterate in another order (D-31 as corrected on 2026-11-28, Question 60: B). A
+    case first (a global, a temporary, a local, a literal inside a list, an object held twice; a row a process, the bytes
+    printed), then the port; D-31's lint rule in `bella-lint`. `marshal.dumps((1, 'a'))` measured on 3.15.2 is
+    `2902e901000000da0161`, the tuple unflagged (3.15 borrows a constant's reference), and the version is 6.
+  * `zipimport`, after `marshal` (it imports `marshal` at its top): CPython's `Lib/zipimport.py` compiled with the program,
+    as the import system's own modules are (tracebacks name `<frozen zipimport>`). The reading half runs as CPython's code
+    (`zipimporter`, `get_data`, `is_package`, `get_source`, `invalidate_caches`, `ZipImportError`, and `get_filename` and
+    `find_spec` of a source member); what makes code stops by name: `get_code` and `exec_module` of any member (E-01 for a
+    source, E-02 for a `.pyc`), and `get_filename` and `find_spec` of a module whose code is a `.pyc` member, which they
+    unmarshal (RL-961). There is no `load_module` in 3.15 (RL-962). `exec_module`, inherited from the prelude's
+    `_LoaderBasics`, must stop rather than raise AttributeError, and `zipimporter.__init__` reaches `_path_stat` (a refusal
+    today, E-04) and `_read_directory` reaches `_verbose_message` (absent): both are the port's (RL-963).
+    `get_resource_reader` imports `importlib.readers` and `zipfile` (\[P2+\]), so it stops; a zstd member gives the
+    ZipImportError CPython gives without `_zstd` (D-20) (RL-964). An archive on `sys.path` stays E-04. A case first: the
+    rows measured on the day (`get_data`, `is_package`, `get_source`, `find_spec`'s name and loader) and a stop row for
+    `get_code`, the archive written by the case's own bytes, since `zipfile` is \[P2+\].
+  * The sweep of 2026-11-22 found them the manifest's two modules that cannot be imported; `tools/missing_names.py` lists
+    them in `NOT_IMPORTED`. They stay in the manifest's `core`, which CPython's import system names.
 * **Where a `match` statement's temporaries are let go of (measured 2026-11-22 with C-3-80; low).** The order of the stores is
   CPython's now (`pipeline/l1/captures.py`). What a pattern holds beside the captures is still let go of after the stores, newest
   first (RL-185), and CPython does it elsewhere in 8 of 14 shapes run on both sides (`pipeline/tests/match_temporaries_probe.txt`,
