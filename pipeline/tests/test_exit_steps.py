@@ -2,9 +2,11 @@
 
 Section 9 promises which of the objects still alive at exit are finalised, and C-9-13 holds that promise: each row prints
 the tags of what its finalisers wrote, sorted. The order among them and the step of the exit each runs in (what it still
-finds of its module's globals, `sys` and the builtins) are unspecified, kept free for a faster exit. The runtime follows
-CPython 3.15.2's order today (H4, RL-514: `finalize_modules`' steps, `_PyModule_ClearDict`'s two passes), and this test holds
-that choice: the same case with BELLA_CASE_STEPS set prints all its finalisers wrote, in order, under CPython and compiled.
+finds of its module's globals, `sys` and the builtins) are unspecified but for the single-underscore order CPython's
+reference guarantees, kept free for a faster exit. The exit's steps are CPython's (H4, RL-514: `finalize_modules`' steps,
+`_PyModule_ClearDict`'s two passes); within a step the runtime finalises in its own order, which differs from CPython's in
+some placements (RL-988). This test holds C-9-13's rows: the same case with BELLA_CASE_STEPS set prints all its finalisers
+wrote, in order, under CPython and compiled.
 A change that relaxes the order changes this test openly, with an entry in docs/DECISIONS.md.
 """
 from __future__ import annotations
