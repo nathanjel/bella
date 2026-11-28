@@ -1,0 +1,17 @@
+"""RL-1092: the __firstlineno__ of the import system's classes, which CPython's compiler takes from its _bootstrap.py and
+_bootstrap_external.py (the first decorator's line, else the class statement's): every class either file defines but the
+lock machinery's, which stops by name (D-33)."""
+import importlib._bootstrap
+import importlib._bootstrap_external
+import sys
+
+CLASSES = {
+    "bootstrap": (importlib._bootstrap, ("ModuleSpec", "BuiltinImporter", "FrozenImporter")),
+    "external": (importlib._bootstrap_external, ("WindowsRegistryFinder", "_LoaderBasics", "SourceLoader", "FileLoader",
+                                                 "SourceFileLoader", "SourcelessFileLoader", "ExtensionFileLoader",
+                                                 "NamespacePath", "NamespaceLoader", "PathFinder", "FileFinder",
+                                                 "AppleFrameworkLoader")),
+}
+module, names = CLASSES[sys.argv[1]]
+for name in names:
+    print(name, getattr(module, name).__firstlineno__)

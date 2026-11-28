@@ -57,6 +57,25 @@ def functions(text: str) -> dict[str, list[tuple[int, int]]]:
     return out
 
 
+def classes(text: str) -> dict[str, int]:
+    """Every class's qualified name and its first line, the first decorator's or else the class statement's, which CPython's
+    compiler stores as the class's `__firstlineno__` (compiler_class; review F48, RL-1092). Classes inside a function are
+    none of the import system's."""
+    out: dict[str, int] = {}
+
+    def walk(body: list[ast.stmt], prefix: str) -> None:
+        for n in body:
+            if isinstance(n, ast.ClassDef):
+                out.setdefault(prefix + n.name, n.decorator_list[0].lineno if n.decorator_list else n.lineno)
+                walk(n.body, prefix + n.name + ".")
+            elif isinstance(n, (ast.If, ast.Try)):
+                for field in ("body", "orelse", "finalbody", "handlers"):
+                    inner = getattr(n, field, [])
+                    walk([s for h in inner for s in (h.body if isinstance(h, ast.ExceptHandler) else [h])], prefix)
+    walk(ast.parse(text).body, "")
+    return out
+
+
 def stated(line: str) -> bool:
     """Whether a line the closed world rewrote needs no CPython line of its own: a blank or a comment, a refusal, or one
     that states it."""
@@ -92,7 +111,8 @@ def table(unstated: list[str]) -> dict[str, object]:
     lib = Path(importlib.__file__).resolve().parent
     cpython = {name: (lib / name).read_text(encoding="utf-8") for name in FILES}
     theirs = {name: functions(text) for name, text in cpython.items()}
-    out: dict[str, object] = {"cpython": VERSION, "preludes": {}}
+    their_classes = {name: classes(text) for name, text in cpython.items()}
+    out: dict[str, object] = {"cpython": VERSION, "preludes": {}, "classes": {}}
     for prelude, order in PRELUDES.items():
         text = (ROOT / "runtime" / "prelude" / prelude).read_text(encoding="utf-8")
         ours = text.splitlines()
@@ -118,6 +138,13 @@ def table(unstated: list[str]) -> dict[str, object]:
                     break
             rows[qualname] = {"file": FILES[found], "lines": lines}
         out["preludes"][prelude] = rows    # type: ignore[index]
+        # each class CPython's text defines under the same name: CPython's first line, its __firstlineno__ (RL-1092)
+        firsts: dict[str, int] = {}
+        for qualname in classes(text):
+            found = next((f for f in order if qualname in their_classes[f]), None)
+            if found is not None:
+                firsts[qualname] = their_classes[found][qualname]
+        out["classes"][prelude] = firsts    # type: ignore[index]
     return out
 
 
@@ -137,7 +164,8 @@ def main(argv: list[str]) -> int:
         return 0
     TABLE.write_text(made, encoding="utf-8")
     shown = sum(len(rows) for rows in json.loads(made)["preludes"].values())
-    print(f"bootstrap_frames: {shown} functions of the import system have CPython's frames")
+    lines = sum(len(rows) for rows in json.loads(made)["classes"].values())
+    print(f"bootstrap_frames: {shown} functions of the import system have CPython's frames, and {lines} classes its first lines")
     return 0
 
 

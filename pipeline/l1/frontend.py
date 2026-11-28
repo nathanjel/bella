@@ -1119,6 +1119,7 @@ class _ClassBodies:
         body = self.block(c.body)
         self.stack.pop()
         first = c.decorator_list[0].lineno if c.decorator_list else c.lineno
+        first = getattr(c, "bella_cpython_firstlineno", first)   # an import system class's: CPython's line (RL-1092)
 
         def store(name: str, value: ast.expr) -> ast.stmt:
             return ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=value)
@@ -2733,6 +2734,25 @@ def mark_frames(tree: ast.Module, rows: dict[str, dict[str, Any]]) -> None:
     visit(tree, "", None)
 
 
+def mark_class_lines(tree: ast.Module, lines: dict[str, int]) -> None:
+    """The bootstrap preludes' classes of CPython's import system (tools/bootstrap_frames.py; review F48, RL-1092): each is
+    marked with the first line CPython's text gives it (`bella_cpython_firstlineno`), its `__firstlineno__`, where its
+    class statement in the prelude stands elsewhere. A class the table does not have is the runtime's own and keeps its
+    line. No node's position changes: the class body has no frame."""
+    def visit(body: list[ast.stmt], prefix: str) -> None:
+        for n in body:
+            if isinstance(n, ast.ClassDef):
+                if (prefix + n.name) in lines:
+                    n.bella_cpython_firstlineno = lines[prefix + n.name]  # type: ignore[attr-defined]
+                visit(n.body, prefix + n.name + ".")
+            elif isinstance(n, (ast.If, ast.Try)):
+                for field in ("body", "orelse", "finalbody"):
+                    visit(getattr(n, field, []), prefix)
+                for h in getattr(n, "handlers", []):
+                    visit(h.body, prefix)
+    visit(tree.body, "")
+
+
 def mark_looking_breaks(tree: ast.Module, code: CodeType) -> None:
     """The `break` statements CPython 3.15.2 compiles to JUMP_BACKWARD, marked `bella_looks`: its eval loop looks
     there (_CHECK_PERIODIC), so a compiled program looks too. A break is a plain JUMP to its loop's exit
@@ -2890,14 +2910,15 @@ def replace_functions(tree: ast.Module, filename: str) -> None:
 
 def lower(source: str, filename: str = "<module>", mode: str = "exec",
           inherit_future: frozenset[str] = frozenset(), tree: ast.Module | None = None,
-          frames: dict[str, dict[str, Any]] | None = None) -> L.Module:
+          frames: dict[str, dict[str, Any]] | None = None, class_lines: dict[str, int] | None = None) -> L.Module:
     """Parse and lower a program to L1 through the registered passes in fact order. Mode "eval"
     lowers an expression (a staged eval text): the module's last statement is its value.
     `inherit_future` are the caller's __future__ features (a staged exec text compiled in the
     context of the function that runs it). `tree`: a module the build made rather than parsed, whose
     positions are another text's (the S-1 entry points of a module's annotations, pipeline/build.py);
     `source` is then unused and no function of it is replaced. `frames`: a bootstrap prelude's table of the import system's
-    functions, which have CPython's frames (mark_frames)."""
+    functions, which have CPython's frames (mark_frames); `class_lines`, its classes of CPython's import system and the first
+    line CPython's text gives each (mark_class_lines)."""
     check_host_grammar()
     if mode == "eval":
         expression = _parse(source, filename, "eval", inherit_future)
@@ -2917,6 +2938,8 @@ def lower(source: str, filename: str = "<module>", mode: str = "exec",
     check_builtins_binding(tree)
     if frames:
         mark_frames(tree, frames)
+    if class_lines:
+        mark_class_lines(tree, class_lines)
     tree.bella_source = filename  # type: ignore[attr-defined]
     tree.bella_future = future_features(tree) | inherit_future  # type: ignore[attr-defined]
     global _counter

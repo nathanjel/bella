@@ -100,6 +100,13 @@ def bootstrap_frames() -> dict[str, dict[str, dict[str, typing.Any]]]:
     return table
 
 
+def bootstrap_class_lines() -> dict[str, dict[str, int]]:
+    """Each bootstrap prelude's classes of CPython's import system and the first line CPython's text gives each, its
+    `__firstlineno__` (tools/bootstrap_frames.py; review F48, RL-1092)."""
+    table: dict[str, dict[str, int]] = json.loads(BOOTSTRAP_FRAMES.read_text(encoding="utf-8"))["classes"]
+    return table
+
+
 # built-in modules CPython writes in C and this runtime in Python: compiled with the prelude, run at the
 # first import (runtime/src/imports.cpp)
 NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runtime" / "prelude" / "_operator.py",
@@ -188,13 +195,15 @@ def prelude_state() -> frozenset[str]:
 
 def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mode: str = "exec",
            future: frozenset[str] = frozenset(), looks: bool = True, tree: ast.Module | None = None,
-           frames: dict[str, dict[str, typing.Any]] | None = None, unseen: bool = False) -> str:
+           frames: dict[str, dict[str, typing.Any]] | None = None, unseen: bool = False,
+           class_lines: dict[str, int] | None = None) -> str:
     # the passes walk the tree by recursion, and a chain of operators, calls or elif branches is as deep as it is long: the
     # limit eval1's run has (pipeline/l1/run.py), and past it a refusal by name, not a traceback (review F17 #14)
     limit = sys.getrecursionlimit()
     sys.setrecursionlimit(max(limit, 20000))
     try:
-        module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future, tree=tree, frames=frames)))
+        module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future, tree=tree, frames=frames,
+                                                 class_lines=class_lines)))
         wf2.check(module, lifetimes=True)
         return emit_module(module, namespace, filename, prelude, looks, prelude_state() if prelude else frozenset(), unseen)
     except RecursionError:
@@ -348,7 +357,7 @@ def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
         for p in [*(p for p, _ in PRELUDE), *NATIVE_IN_PYTHON, *RUNTIME_PYTHON]:
             cpp = out / f"prelude_{p.stem}.cpp"
             cpp.write_text(to_cpp(p.read_text(encoding="utf-8"), f"<bella prelude {p.name}>", f"bella::prelude_{p.stem.lstrip('_')}", prelude=True,
-                                  frames=bootstrap_frames().get(p.name)),
+                                  frames=bootstrap_frames().get(p.name), class_lines=bootstrap_class_lines().get(p.name)),
                            encoding="utf-8")
             units.append((cpp, PRELUDE_FLAGS))
         objs = [out / f"{u.stem}{'.c' if u.suffix == '.c' else ''}.o" for u, _ in units]   # zlib's crc32.c beside the runtime's units

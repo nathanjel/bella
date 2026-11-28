@@ -64,6 +64,9 @@ argument list a line), one row a process, compared on standard output, standard 
   program changed stops with E-04's words (Question 55); with the list put back, `None` (CPython's ImportError), or of a
   module already loaded, it agrees; an import with `sys.path` cleared or assigned empty stops, the program's directory
   being gone (Question 56).
+* The `__firstlineno__` of the import system's classes is CPython's line (`classlines`, 2 rows, the 15 classes but the lock
+  machinery's; RL-1092): `tools/bootstrap_frames.py` gives each class CPython's first line, which the front end stores; the
+  other preludes' classes stand for C types and have none (`test_prelude_class_lines.py`, 273 classes).
 * The lock code's calls an import makes under CPython (`_thread.RLock`, `allocate_lock`, `get_ident`, `_weakref.ref`,
   `_imp.acquire_lock`, `release_lock`, each replaced by a counting wrapper), none compiled (`lockcalls`, 1 row; Question 63:
   A, registered under D-33).
