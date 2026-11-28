@@ -64,6 +64,9 @@ argument list a line), one row a process, compared on standard output, standard 
   program changed stops with E-04's words (Question 55); with the list put back, `None` (CPython's ImportError), or of a
   module already loaded, it agrees; an import with `sys.path` cleared or assigned empty stops, the program's directory
   being gone (Question 56).
+* The lock code's calls an import makes under CPython (`_thread.RLock`, `allocate_lock`, `get_ident`, `_weakref.ref`,
+  `_imp.acquire_lock`, `release_lock`, each replaced by a counting wrapper), none compiled (`lockcalls`, 1 row; Question 63:
+  A, registered under D-33).
 * What one `gc.collect()` frees where the runtime's objects are not CPython's (`gcmoment`, 6 rows; Question 58: N): a
   class's `__mro__` tuple or namespace view that a finaliser reads first keeps the class to the next collection
   (RL-1040), and `gc.garbage`'s objects (RL-1103) and order (RL-1049) under DEBUG_SAVEALL are the runtime's own, each
@@ -209,6 +212,8 @@ REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
                                          "__dir__, keyword TypeError module.__dir__() takes no keyword arguments\n"
                                          "__format__, two TypeError object.__format__() takes exactly one argument (2 given)\n"
                                          "__reduce_ex__, two TypeError object.__reduce_ex__() takes exactly one argument (2 given)\n"),
+    # the lock code's calls, which an import that takes no locks does not make (Question 63: A; RL-1024)
+    ("lockcalls", ("patch_all",)): ("D-33", "patch_all [] True\n"),
     # what one gc.collect() frees where the runtime's objects are not CPython's (Question 58: N; RL-1040, RL-1049, RL-1103)
     ("gcmoment", ("mro_none",)): ("D-04", "mro_none dead after one: False after two: True [2]\n"),
     ("gcmoment", ("dict_none",)): ("D-04", "dict_none dead after one: False after two: True [['me', 'x']]\n"),

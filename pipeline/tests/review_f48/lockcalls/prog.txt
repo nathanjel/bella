@@ -1,0 +1,24 @@
+"""Question 63 (answered A; RL-1024): the lock code's calls an import makes under CPython, which the compiled import system,
+taking no locks, does not make (D-33): each of the six functions replaced by a counting wrapper, then one import."""
+import _imp
+import _thread
+import _weakref
+import sys
+
+calls: dict[str, int] = {}
+
+
+def counting(module: object, name: str) -> None:
+    real = getattr(module, name)
+
+    def wrapper(*args: object, **kwargs: object) -> object:
+        calls[name] = calls.get(name, 0) + 1
+        return real(*args, **kwargs)
+    setattr(module, name, wrapper)
+
+
+for module, name in ((_thread, "RLock"), (_thread, "allocate_lock"), (_thread, "get_ident"), (_weakref, "ref"),
+                     (_imp, "acquire_lock"), (_imp, "release_lock")):
+    counting(module, name)
+import json  # noqa: E402,F401
+print(sys.argv[1], sorted(calls.items()), "json" in sys.modules)
