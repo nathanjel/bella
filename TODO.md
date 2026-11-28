@@ -920,7 +920,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **`marshal` (the author, Question 33, 2026-11-24: A; D-31).** A port of `Python/marshal.c` for every type but code
   objects, which stop by name (E-02): `loads` and `load` exact, `dumps` and `dump` exact at version 2 and below, and at
   version 3 and above (the default, 6) an object's reference flag set by the runtime's own count where CPython's `w_ref` reads
-  CPython's, so the bytes may differ in type bytes and back-reference numbers, never in length or in what `loads` returns.
+  CPython's, so the bytes may differ, length included, and a set `loads` returns may iterate in another order (D-31 as
+  corrected on 2026-11-28, Question 60: B).
   A case first, with the rows measured on the day (a global, a temporary, a local, a literal inside a list, an object held
   twice; `pipeline`'s own shape of the case: a row a process, the bytes printed), then the port; D-31's lint rule in
   `bella-lint` when it is written. The question's text had `marshal.dumps((1, 'a'))` as `a902e9…` with a flag on the tuple:
