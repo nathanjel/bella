@@ -34,7 +34,9 @@ argument list a line), one row a process, compared on standard output, standard 
   import and `_find_spec`'s raise, `ModuleSpec.cached`'s getter, `PathFinder.discover` suspended, a frozen module's body as
   a hook sees its stack; RL-1058, RL-1063).
 * An argument by name and position, a second built-in module, a key in a built-in type's dict, a module's class, and
-  `dir()`'s sort (`lookups`, 8 rows: RL-965, RL-1013, RL-1048, RL-1050, RL-1052).
+  `dir()`'s sort (`lookups`, 12 rows: RL-965, RL-1013, RL-1048, RL-1050, RL-1052). A second module object of a built-in
+  module stops with E-04's words (Question 54), sys and builtins once `sys.modules` no longer holds them, and `_weakref`,
+  which the runtime made for itself, is the first import's.
 * Five defects of a class's shape and a call's message (`shapes`, 5 rows, each with the neighbours of the reviewer's
   example): `fromhex` on a subclass of bytes or bytearray calls the subclass with the result (RL-1037); assigning a class's
   `__module__` drops its `__firstlineno__` (RL-1044); `repr()` of a class, and the default `repr()` of its instance, say the
@@ -57,8 +59,8 @@ argument list a line), one row a process, compared on standard output, standard 
   (`qualnames`: RL-1053; at module level, in a function, in a class body and a method).
 * Each write and name E-04 lists, under CPython and compiled (`e04writes`, 16 rows; RL-1102): `sys.path_hooks`,
   `sys.set_lazy_imports` and `sys.set_lazy_imports_filter` stop with E-04's words, as `importlib.reload` does; writes to
-  `sys.modules` (a module put in, one replaced, one deleted and imported again, `None`) and `__import__` replaced through
-  `setattr` do what CPython does; a write to `sys.meta_path` or `sys.path` is neither refused nor stopped, and the import
+  `sys.modules` (a module put in, one replaced, one deleted and imported again, `None`), which are [P1] since Question 54,
+  and `__import__` replaced through `setattr` do what CPython does; a write to `sys.meta_path` or `sys.path` is neither refused nor stopped, and the import
   after it finds the module where CPython asks the program's finder or finds nothing (`OPEN`, the author's).
 
 And one registered difference is held as D-17 words it (the author's decision of 2026-11-26, Question 49: A; RL-980):
@@ -163,6 +165,11 @@ STOPS: dict[tuple[str, tuple[str, ...]], str] = {
        "build time, E-04)" for row, name in (("path_hooks", "path_hooks"), ("lazy_mode", "set_lazy_imports"),
                                              ("lazy_filter", "set_lazy_imports_filter"))},
     ("e04writes", ("reload",)): "bella: not implemented: importlib.reload (running a module's body again is import-system customisation, E-04)",
+    # a second module object of a built-in module is E-04's (Question 54, RL-1013)
+    **{("lookups", (row,)): f"bella: not implemented: a second module object of the built-in module '{name}' (a compiled "
+       "program's built-in module is one object: import-system customisation, E-04)"
+       for row, name in (("builtin second", "math"), ("builtin again", "math"), ("builtin made first", "cmath"),
+                         ("sys again", "sys"), ("builtins again", "builtins"))},
 }
 # the modules CPython writes in C and frees at the exit, which here live to the end of the process (D-19)
 OWN_MODULES = ("atexit", "binascii", "cmath", "gc", "grp", "pwd", "time", "unicodedata", "zlib", "_bisect", "_blake2",
@@ -203,11 +210,9 @@ REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
                                            "('quantize result has too many digits for current context',)\n"),
 }
 # rows that differ until the author has decided: a buffered writer hands a program's raw write() a bytes where CPython hands
-# a read-only memoryview (RL-991, with Question 40); a second module object of a built-in module, which CPython makes at each
-# _imp.create_builtin and the runtime does not (RL-1013); a write to sys.meta_path or sys.path, which E-04 excludes and
-# nothing refuses or stops, and which an import after it does not see (RL-1102)
+# a read-only memoryview (RL-991, with Question 40); a write to sys.meta_path or sys.path, which E-04 excludes and nothing
+# refuses or stops, and which an import after it does not see (RL-1102)
 OPEN: frozenset[tuple[str, tuple[str, ...]]] = frozenset({("viewsmore", ("BufferedRandom.write", kind)) for kind in "bacw"} |
-                                                          {("lookups", (row,)) for row in ("builtin second", "builtin again")} |
                                                           {("a45more", ("native_direct",))} |   # sys's and builtins' order: RL-1061
                                                           {("e04writes", (row,)) for row in ("meta_insert", "meta_clear", "meta_assign",
                                                                                              "path_clear", "path_assign")})

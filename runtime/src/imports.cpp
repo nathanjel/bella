@@ -618,6 +618,7 @@ void fill_types(Module* m) {
 struct NativeModule {
     void (*fill)(Module*);
     Module* made = nullptr;
+    bool handed = false;                         // given out by _imp.create_builtin, after which another call is a second object
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
     static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"_math_integer", {fill_math_integer}}, {"math", {fill_math}}, {"cmath", {fill_cmath}}, {"unicodedata", {fill_unicodedata}}, {"_md5", {fill_md5}}, {"_sha1", {fill_sha1}}, {"_sha2", {fill_sha2}},
@@ -1467,27 +1468,50 @@ Ref i_bella_is_builtin(Obj, Args a) {            // one of the runtime's built-i
     const std::string& name = name_arg(a.pos(0))->text;
     return Ref::steal(boolean(name == "sys" || name == "builtins" || native_registry().contains(name)));
 }
-Ref i_bella_create_builtin(Obj, Args a) {        // _imp.create_builtin: one module per name
+// A built-in module the runtime has written, made once: for _imp.create_builtin, and for the runtime's own use of one that
+// CPython has from its start and no program was handed yet (_weakref's type, abc.cpp)
+Module* native_module_create(const char* name) {
+    NativeModule& n = native_registry().at(name);
+    if (n.made == nullptr) {
+        n.made = new_module(name);
+        // the names table has a module's names under the name the module gives itself, which for one built-in module is
+        // not the name it is imported by (_math_integer is math.integer)
+        const bool integer = std::string_view(name) == "_math_integer";
+        note_native_module(integer ? "math.integer" : name, n.made);
+        n.fill(n.made);
+        adopt_functions(n.made);
+        order_as_cpython(n.made, integer ? "math.integer" : std::string_view(name));
+        note_filled(n.made);
+    }
+    return n.made;
+}
+// _imp.create_builtin. CPython's makes a module object at each call (create_builtin, Python/import.c), with its functions,
+// and for a module of per-module state its classes, made again; for sys and builtins it gives the module sys.modules holds
+// (import_add_module), which is the module itself until the program deleted or replaced the entry. A compiled program's
+// built-in module is one object: a second is E-04's, and stops (Question 54, RL-1013). Handing a module out is what counts,
+// not making it, since the runtime makes one for its own use (native_module_create)
+Ref i_bella_create_builtin(Obj, Args a) {
     positional_only(a, "_bella_create_builtin", 1, 1);
     const std::string& name = name_arg(a.pos(0))->text;
-    if (name == "sys") return Ref::share(Obj::of(sys_module()));
-    if (name == "builtins") return Ref::share(Obj::of(builtins_module()));
+    auto second = [&] {
+        return NotImplemented("a second module object of the built-in module '" + name +
+                              "' (a compiled program's built-in module is one object: import-system customisation, E-04)");
+    };
+    if (name == "sys" || name == "builtins") {
+        Module* m = name == "sys" ? sys_module() : builtins_module();
+        if (dict_get(sys_modules(), Obj::of(N(name.c_str()))) != Obj::of(m)) throw second();
+        return Ref::share(Obj::of(m));
+    }
     if (!native_registry().contains(name))       // one of sys.builtin_module_names the runtime has not written
         throw NotImplemented("the built-in module '" + name + "' (CPython has it; the runtime does not yet)");
     NativeModule& n = native_registry().at(name);
-    if (n.made == nullptr) {
-        n.made = new_module(name.c_str());
-        // the names table has a module's names under the name the module gives itself, which for one built-in module is
-        // not the name it is imported by (_math_integer is math.integer)
-        note_native_module(name == "_math_integer" ? "math.integer" : name.c_str(), n.made);
-        n.fill(n.made);
-        adopt_functions(n.made);
-        order_as_cpython(n.made, name == "_math_integer" ? "math.integer" : std::string_view(name));
-        note_filled(n.made);
-    }
-    // CPython's makes a module each time it is called (but for sys and builtins); the runtime gives the one it has: the
-    // author's to decide (RL-1013; a stop broke an import after a delete from sys.modules, which agrees with CPython's text)
-    return Ref::share(Obj::of(n.made));
+    if (n.handed) throw second();
+    n.handed = true;
+    return Ref::share(Obj::of(native_module_create(name.c_str())));
+}
+Ref i_bella_native_module(Obj, Args a) {         // the bootstrap's _imp, which CPython's C makes before any import: not handed out
+    positional_only(a, "_bella_native_module", 1, 1);
+    return Ref::share(Obj::of(native_module_create(name_arg(a.pos(0))->text.c_str())));
 }
 
 void warn_ex(const char* category, const std::string& message) { runtime_warning(category, message); }   // for the rest of the runtime

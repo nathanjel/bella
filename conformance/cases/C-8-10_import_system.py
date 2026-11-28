@@ -3,12 +3,12 @@
 # status: P1
 # source: step 3b (compiled imports): Python/import.c, Python/ceval.c and importlib/_bootstrap.py, 3.15.2
 """The import system as CPython's, as far as a dialect program can see it (E-04 and E-06 exclude
-replacing __import__ and writing sys.modules): a module's namespace as the import system fills
-it, the spec and loader it is given, sys.modules in the order modules finish, the parent's
-attribute bound once a submodule has loaded, relative imports and their errors, a failing module
-removed from sys.modules and run again by the next import, ModuleNotFoundError and ImportError
-with their name, name_from and path, PEP 562's __getattr__ and __dir__, import * with and
-without __all__, and __import__ called with a literal name."""
+replacing __import__; pipeline/tests/test_compiled_imports.py writes sys.modules): a module's
+namespace as the import system fills it, the spec and loader it is given, sys.modules in the
+order modules finish, the parent's attribute bound once a submodule has loaded, relative imports
+and their errors, a failing module removed from sys.modules and run again by the next import,
+ModuleNotFoundError and ImportError with their name, name_from and path, PEP 562's __getattr__
+and __dir__, import * with and without __all__, and __import__ called with a literal name."""
 import sys
 
 print("main:", __name__, __package__, __spec__, list(globals())[:7], type(globals()["__loader__"]).__name__)

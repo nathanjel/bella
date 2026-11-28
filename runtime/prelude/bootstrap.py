@@ -28,9 +28,9 @@ __intrinsics__ = ["_find_and_load", "_find_and_load_lazy_submodule", "_handle_fr
 
 _bootstrap_external = None
 
-# bella: CPython's C makes _imp before any import can run and hands it to _setup. The text that imports a built-in
-# module asks it (BuiltinImporter.find_spec), and the second module's body imports before _setup runs: so it is made here
-_imp = _bella_create_builtin('_imp')
+# bella: CPython's C makes _imp before any import can run and hands it to _setup. The text that imports a built-in module
+# asks it (BuiltinImporter.find_spec), and the second module's body imports before _setup runs: made here, not handed out
+_imp = _bella_native_module('_imp')
 
 _NOT_GIVEN = object()
 _repr_running = []

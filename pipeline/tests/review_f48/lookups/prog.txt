@@ -110,5 +110,29 @@ elif ROW == "builtin again":
     del sys.modules["math"]
     import math as again
     print(again is math)
+elif ROW == "builtin made first":                # the module made for a spec, then the import makes another
+    made = importlib.util.module_from_spec(importlib.util.find_spec("cmath"))  # type: ignore[arg-type]
+    import cmath
+    print(made is cmath)
+elif ROW == "sys again":                         # sys and builtins are the module itself only while sys.modules holds it
+    del sys.modules["sys"]
+    import sys as again
+    sys.modules["sys"] = sys
+    print(again is sys, hasattr(again, "argv"))
+elif ROW == "builtins again":
+    import builtins
+    del sys.modules["builtins"]
+    import builtins as again
+    sys.modules["builtins"] = builtins
+    print(again is builtins, hasattr(again, "len"))
+elif ROW == "weakref made first":                # the runtime made _weakref for _abc's registry: the first import is given it
+    import abc
+
+    class Base(abc.ABC):
+        pass
+
+    Base.register(int)
+    import _weakref
+    print(issubclass(int, Base), type(_weakref.ref(Base)).__name__, _weakref is sys.modules["_weakref"])
 else:
     raise SystemExit("no such row: " + ROW)

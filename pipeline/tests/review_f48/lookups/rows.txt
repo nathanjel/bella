@@ -6,3 +6,7 @@ proxy
 "builtin same"
 "builtin second"
 "builtin again"
+"builtin made first"
+"sys again"
+"builtins again"
+"weakref made first"

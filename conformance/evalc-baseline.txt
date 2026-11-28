@@ -235,3 +235,4 @@ C-9-12_a_kept_frame_keeps_its_caller.py
 C-9-13_the_steps_of_the_exit.py
 C-9-14_when_a_module_dies.py
 X-4-02_set_lazy_imports_rejected.py
+X-4-03_second_builtin_module_rejected.py

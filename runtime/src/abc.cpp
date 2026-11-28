@@ -75,15 +75,12 @@ std::int64_t reference_hash(Obj obj) {
 
 // PyWeakref_NewRef's type, weakref.ReferenceType: _weakref's (runtime/prelude/_weakref.py), from the namespace its prelude runs
 // in, which no program reaches. CPython's type is there from the start; here the module is made for it if it was not, as the
-// import system makes a built-in module (_imp.create_builtin), and an import of it later finds that one (D-30: sys.modules
-// has it only then)
+// import system makes a built-in module (_imp.create_builtin), and the program's first import of it is given that one (D-30:
+// sys.modules has it only then)
 Obj reference_type() {
     static Obj type;
     if (type.is_unset()) {
-        if (native_module_made("_weakref") == nullptr) {
-            Obj name = Obj::of(N("_weakref"));
-            i_bella_create_builtin(Obj{}, Args{&name, 1, nullptr, 0});
-        }
+        native_module_create("_weakref");
         for (Module* h : hidden_modules())
             if (name_arg(h->name.get())->text == "_weakref") type = dict_get(h->dict, Obj::of(N("ReferenceType")));
         if (!is_kind(type, Kind::Class)) throw NotImplemented("_abc's weak references without _weakref's type");

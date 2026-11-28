@@ -260,8 +260,9 @@ def test_globals_and_a_module_run_again() -> None:
 
 
 def test_sys_modules_edits() -> None:
-    """E-04 excludes these in a program's own code; the standard library does them (os.path,
-    collections.abc), so the runtime behaves as CPython."""
+    """Writes to sys.modules, [P1] since spec v0.50 (Question 54); the standard library makes them
+    (os.path, collections.abc). A second module object of a built-in module is E-04's and stops:
+    test_system_modules and the F48 probe `lookups`."""
     same({"m.py": "print('m runs')\nX = 1\n",
           "replaced.py": "import sys\nclass StandIn:\n    def __repr__(self):\n        return '<the stand-in>'\nsys.modules[__name__] = StandIn()\n",
           "main.py": """\

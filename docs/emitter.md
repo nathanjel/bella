@@ -333,10 +333,14 @@ The import system keeps CPython's split:
   of the manifest's `core` and `mapped` built-in modules, so a name the runtime lacks is refused, not
   an AttributeError or an ImportError a program would take for the module's answer.
 
-E-04 and E-06 exclude replacing `__import__` and writing `sys.modules` in a program's own code, and
-the linter will say so; the runtime still behaves as CPython there, since the standard library
-writes `sys.modules` (`os.path`, `collections.abc`). So `pipeline/tests/test_compiled_imports.py`
-covers those paths, and case C-8-10 stays inside the dialect. What a hook alone could see of
+E-04 and E-06 exclude replacing `__import__` in a program's own code, and the linter will say so;
+the runtime still behaves as CPython there. Writes to `sys.modules` are [P1] (spec v0.50): the
+standard library makes them (`os.path`, `collections.abc`), and the runtime does them as CPython,
+but for a second module object of a built-in module, which `_imp.create_builtin` stops by name
+(E-04: the runtime's built-in module is one object, made once, and only handing it out a second
+time stops, so the module the runtime made for its own use is the first import's). So
+`pipeline/tests/test_compiled_imports.py` covers those paths, and case C-8-10 stays inside the
+dialect. What a hook alone could see of
 CPython's C code importing `_io` to read a module's file has no counterpart here.
 
 Lazy imports (PEP 810; C-8-05 to C-8-07) are

@@ -665,6 +665,7 @@ Obj cpython_doc(std::string_view name);          // a built-in module's or type'
 bool& shutting_down();                           // finalize_modules has begun: imports fail as CPython's do
 Ref i_bella_shutting_down(Obj, Args a);
 Module* native_module_made(const char* name);    // a built-in module if it was ever created, without creating it
+Module* native_module_create(const char* name);  // a built-in module the runtime has written, made once, not handed out
 Ref i_resource_warning(Obj, Args a);             // PyErr_ResourceWarning(source, 1, message), with no import on the way out
 void add_note(Obj exc, const std::string& text); // _PyErr_FormatNote
 // _PyArg_ParseTupleAndKeywords' error for a keyword it does not know, with its suggestion
@@ -1425,6 +1426,7 @@ Ref i_bella_is_builtin(Obj, Args a);
 Ref i_bella_plain_name(Obj, Args a);
 Ref lazy_import_of(const char* name);             // a lazy import placeholder for a namespace the runtime fills (imports.cpp)
 Ref i_bella_create_builtin(Obj, Args a);
+Ref i_bella_native_module(Obj, Args a);
 Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives
 Ref i_bella_discover(Obj, Args a);               // bootstrap_external.py's: PathFinder.discover's path entry finder
 ClassObject* no_instances_yet(const char* name, const char* module = nullptr);   // a C type without instances yet, made once (imports.cpp)

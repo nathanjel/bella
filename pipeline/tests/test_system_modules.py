@@ -1249,6 +1249,10 @@ def test_what_is_absent_stops_by_name() -> None:
              ("import gc\ngc.set_debug(gc.DEBUG_STATS)\ngc.collect()", "gc.DEBUG_STATS (its lines are CPython's"), ("import gc\ngc.is_tracked([])", "gc.is_tracked (the cycle collector"),
              ("import gc\ngc.get_objects()", "gc.get_objects (CPython's object graph, E-05)"), ("import gc\ngc.freeze()", "gc.freeze (CPython's object graph, E-05)"),
              ("import threading\nthreading.Thread(target=print).start()", "creating a thread"),
+             # atexit dropped from sys.modules and imported again is a second module object, E-04's (Question 54; under CPython
+             # its handlers are the interpreter's, whichever module object asks)
+             ("import atexit, sys\ndel sys.modules['atexit']\nimport atexit as again",
+              "a second module object of the built-in module 'atexit'"),
 )
     for body, name in cases:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1284,15 +1288,6 @@ ATEXIT_WAYS_OUT = {
         import atexit
         atexit.register(print, "handler")
         raise SystemExit
-    """,
-    "the module dropped from sys.modules": """
-        import atexit, sys
-        atexit.register(print, "registered before the module was dropped")
-        del sys.modules["atexit"]
-        import atexit as again
-        print(again._ncallbacks(), atexit._ncallbacks())   # the list is the interpreter's, whichever module object asks
-        again.register(print, "registered with the second module")
-        del sys.modules["atexit"], atexit, again
     """,
     "a handler that runs the handlers": """
         import atexit
