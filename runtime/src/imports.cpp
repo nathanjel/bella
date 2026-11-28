@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <filesystem>
 #include <unordered_set>
 #include <cstdint>
 #include <unordered_map>
@@ -314,6 +315,127 @@ Ref i_bella_holds(Obj, Args a) {                  // the program holds a module 
 }
 
 // The prelude's primitives for bootstrap.py, which no program can name.
+// Question 56 (2026-11-28): writes to sys.path, and the search an import makes after one. CPython's PathFinder walks sys.path
+// for a top-level module that no built-in or frozen module answers (Lib/importlib/_bootstrap_external.py:1238-1293) and
+// loads the first file an entry's FileFinder finds. A compiled program starts with the program's directory alone, where the
+// build looked first (then PYTHONPATH's entries and the standard library, which the list does not show), and while the list
+// is that, the registry answers. After a write the live list is searched as CPython's is, on the run's files: the program's
+// directory stands for the build's own search; an entry with nothing for the name is passed over, as one that is no str,
+// does not exist, or is None in sys.path_importer_cache is; one holding the file the build compiled gives the compiled
+// module; any other file stops the program by name, since a compiled program cannot run a module it does not have. Where
+// the list no longer holds the program's directory, or an entry after it holds a file for a module the build found
+// further on (CPython's list has the standard library's entries there, and a program's entry may come before or after
+// them), what CPython finds is not known, and the program stops
+namespace {
+bool sys_path_as_started(Obj path) {             // the program's directory, once or more, and nothing else
+    if (!is_exact_list(path)) return false;
+    const std::vector<Obj>& items = static_cast<List*>(path.object())->items;
+    if (items.empty()) return false;
+    for (Obj e : items)
+        if (!is_exact_str(e) || name_arg(e)->text != program_directory()) return false;
+    return true;
+}
+bool same_directory(const std::filesystem::path& a, const std::filesystem::path& b) {
+    std::error_code ec;
+    return a == b || std::filesystem::equivalent(a, b, ec);
+}
+struct EntryHit {
+    enum { None, File, Portion, Other } kind = None;
+    std::filesystem::path file;
+    std::string what;
+};
+// FileFinder.find_spec for a top-level name in one entry: a package's __init__ of each suffix first, then a module of each
+// suffix (extensions, source, bytecode, in _get_supported_file_loaders' order); a directory without an __init__ is a
+// namespace portion that a module beside it overrides, and the search goes on past it (PathFinder._get_spec), a regular
+// module further on winning. An entry that is a file is an archive's for zipimport (E-04)
+EntryHit search_entry(const std::string& entry, const std::string& name) {
+    namespace fs = std::filesystem;
+    static const std::vector<std::string> suffixes = [] {
+        std::vector<std::string> out;
+        const std::string& listed = name_arg(cpython_doc("imp:extension_suffixes"))->text;
+        for (std::size_t at = 0; at <= listed.size();) {
+            std::size_t end = listed.find('\n', at);
+            if (end == std::string::npos) end = listed.size();
+            if (end > at) out.push_back(listed.substr(at, end - at));
+            at = end + 1;
+        }
+        out.push_back(".py");
+        out.push_back(".pyc");
+        return out;
+    }();
+    std::error_code ec;
+    const fs::path dir = entry.empty() ? fs::path(".") : fs::path(entry);   // '' is the current directory
+    const fs::file_status st = fs::status(dir, ec);
+    if (ec || !fs::exists(st)) return {};
+    if (!fs::is_directory(st)) return {EntryHit::Other, dir, "an entry that is a file, which CPython's zipimport opens (E-04)"};
+    const fs::path package = dir / name;
+    bool portion = false;
+    if (fs::is_directory(package, ec)) {
+        for (const std::string& suffix : suffixes)
+            if (fs::is_regular_file(package / ("__init__" + suffix), ec)) return {EntryHit::File, package / ("__init__" + suffix), {}};
+        portion = true;
+    }
+    for (const std::string& suffix : suffixes)
+        if (fs::is_regular_file(dir / (name + suffix), ec)) return {EntryHit::File, dir / (name + suffix), {}};
+    if (portion) return {EntryHit::Portion, package, "a namespace package (step 3b)"};
+    return {};
+}
+void search_changed_path(const Str* name, const Compiled* compiled) {
+    Obj path = dict_get(sys_module()->dict, Obj::of(intern("path")));
+    if (!path.is_unset() && sys_path_as_started(path)) return;
+    auto stop = [&](const std::string& why) {
+        throw NotImplemented("importing '" + name->text + "' with sys.path as the program changed it: " + why + " (spec section 8)");
+    };
+    auto stop_at = [&](const std::string& why, const std::filesystem::path& where) { stop(why + ", '" + where.string() + "'"); };
+    if (path.is_unset() || !is_exact_list(path)) stop("a sys.path that is no list");
+    Obj cache = dict_get(sys_module()->dict, Obj::of(intern("path_importer_cache")));
+    if (!cache.is_unset() && !is_exact_dict(cache)) stop("a sys.path_importer_cache that is no dict");
+    const std::filesystem::path own = program_directory();
+    bool found_in_own = false;                   // the build found the module in the program's directory
+    if (compiled != nullptr) {
+        std::filesystem::path where = std::filesystem::path(compiled->origin).parent_path();
+        found_in_own = same_directory(compiled->package ? where.parent_path() : where, own);
+    }
+    bool seen = false;
+    const EntryHit* portion = nullptr;           // a namespace portion met on the way, which a regular module further on overrides
+    EntryHit first_portion;
+    std::vector<Ref> entries;                    // held: a key of the cache compared on the way may run a program's __eq__
+    for (Obj e : static_cast<List*>(path.object())->items) entries.push_back(Ref::share(e));
+    for (const Ref& held : entries) {
+        Obj e = held.get();
+        if (as_str(e) == nullptr) continue;      // _get_spec: an entry that is no str is passed over
+        if (!is_exact_str(e)) stop("an entry of a subclass of str, whose methods CPython's search calls");
+        if (!cache.is_unset()) {
+            Obj finder = dict_get(static_cast<Dict*>(cache.object()), e);
+            if (finder == None()) continue;      // _path_importer_cache: None, no finder for the entry
+            if (!finder.is_unset()) stop("an entry with a finder in sys.path_importer_cache");
+        }
+        const std::string& entry = name_arg(e)->text;
+        if (same_directory(entry.empty() ? std::filesystem::path(".") : std::filesystem::path(entry), own)) {
+            if (found_in_own) return;
+            seen = true;
+            continue;
+        }
+        EntryHit hit = search_entry(entry, name->text);
+        if (hit.kind == EntryHit::None) continue;
+        if (hit.kind == EntryHit::Portion) {
+            if (portion == nullptr) {
+                first_portion = hit;
+                portion = &first_portion;
+            }
+            continue;
+        }
+        std::error_code ec;
+        if (hit.kind == EntryHit::File && compiled != nullptr && std::filesystem::equivalent(hit.file, compiled->origin, ec)) return;
+        if (hit.kind == EntryHit::Other) stop_at(hit.what, hit.file);
+        stop_at(seen && compiled != nullptr ? "a file the build did not compile, after the program's directory, where CPython's "
+                                              "list has the standard library's entries"
+                                            : "a file the build did not compile", hit.file);
+    }
+    if (!seen) stop("the program's directory is no longer on it");
+    if (portion != nullptr && compiled == nullptr) stop_at(portion->what, portion->file);   // the portions are the module
+}
+}  // namespace
 Ref i_bella_find(Obj, Args a) {                  // the registry's (origin, is_package, frozen), or None
     positional_only(a, "_bella_find", 1, 1);
     const Str* name = name_arg(a.pos(0));
@@ -328,6 +450,8 @@ Ref i_bella_find(Obj, Args a) {                  // the registry's (origin, is_p
         // puts the frozen modules in sys.modules under these names) runs a second, uninitialised copy: reached only through a
         // program's own package named importlib, under <frozen importlib.machinery>
         throw NotImplemented("importing '" + name->text + "' as a frozen module of its own (a second copy of the import system, which only a program's own importlib package reaches)");
+    if (name->text.find('.') == std::string::npos && (it == registry().end() || it->second.kind != ModuleKind::Frozen))
+        search_changed_path(name, it != registry().end() && it->second.kind == ModuleKind::Source ? &it->second : nullptr);   // Question 56
     if (it == registry().end()) {
         if (is_stdlib_name(a.pos(0))) {
             if (may_be_absent) return none_ref();

@@ -1,0 +1,7 @@
+# a file the build did not compile, before the program's directory or after it, or what CPython finds not known (Question 56)
+shadow => bella: not implemented: importing 't_mod' with sys.path as the program changed it: a file the build did not compile, '
+lib_only => bella: not implemented: importing 'only_lib' with sys.path as the program changed it: a file the build did not compile, '
+stdlib_after => bella: not implemented: importing 'json' with sys.path as the program changed it: a file the build did not compile, after the program's directory, where CPython's list has the standard library's entries, '
+cleared => bella: not implemented: importing 't_mod' with sys.path as the program changed it: the program's directory is no longer on it (spec section 8)
+file_entry => bella: not implemented: importing 't_mod' with sys.path as the program changed it: an entry that is a file, which CPython's zipimport opens (E-04), '
+portion_only => bella: not implemented: importing 't_mod2' with sys.path as the program changed it: a namespace package (step 3b), '

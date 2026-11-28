@@ -62,8 +62,13 @@ argument list a line), one row a process, compared on standard output, standard 
   `sys.modules` (a module put in, one replaced, one deleted and imported again, `None`), which are [P1] since Question 54,
   and `__import__` replaced through `setattr` do what CPython does; an import that would search a `sys.meta_path` the
   program changed stops with E-04's words (Question 55); with the list put back, `None` (CPython's ImportError), or of a
-  module already loaded, it agrees; a write to `sys.path` is neither refused nor stopped, and the import after it finds the module where CPython
-  finds nothing (`OPEN`, the author's).
+  module already loaded, it agrees; an import with `sys.path` cleared or assigned empty stops, the program's directory
+  being gone (Question 56).
+* Writes to `sys.path` and the search an import makes after one (`syspath`, 13 rows; Question 56, C-8-23): the program's
+  directory again, `''`, an entry that does not exist or that `sys.path_importer_cache` says has no finder, a namespace
+  portion before a regular module, and a module no entry holds agree; a file the build did not compile, before or after
+  the program's directory, an entry that is a file, a namespace package and a list without the program's directory stop
+  by name (`stops.txt`).
 
 And one registered difference is held as D-17 words it (the author's decision of 2026-11-26, Question 49: A; RL-980):
 
@@ -167,6 +172,9 @@ STOPS: dict[tuple[str, tuple[str, ...]], str] = {
        "build time, E-04)" for row, name in (("path_hooks", "path_hooks"), ("lazy_mode", "set_lazy_imports"),
                                              ("lazy_filter", "set_lazy_imports_filter"))},
     ("e04writes", ("reload",)): "bella: not implemented: importlib.reload (running a module's body again is import-system customisation, E-04)",
+    # an import with the program's directory gone from sys.path (Question 56, RL-1102)
+    **{("e04writes", (row,)): "bella: not implemented: importing 't_mod' with sys.path as the program changed it: the program's "
+       "directory is no longer on it (spec section 8)" for row in ("path_clear", "path_assign")},
     # an import that would search a sys.meta_path the program changed (Question 55, RL-1102)
     **{("e04writes", (row,)): "bella: not implemented: an import with sys.meta_path changed (import-system customisation: "
        "the closed world is resolved at build time, E-04)" for row in ("meta_insert", "meta_clear", "meta_assign")},
@@ -215,11 +223,9 @@ REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
                                            "('quantize result has too many digits for current context',)\n"),
 }
 # rows that differ until the author has decided: a buffered writer hands a program's raw write() a bytes where CPython hands
-# a read-only memoryview (RL-991, with Question 40); a write to sys.path, which E-04 excludes and nothing refuses or
-# stops, and which an import after it does not see (RL-1102)
+# a read-only memoryview (RL-991, with Question 40)
 OPEN: frozenset[tuple[str, tuple[str, ...]]] = frozenset({("viewsmore", ("BufferedRandom.write", kind)) for kind in "bacw"} |
-                                                          {("a45more", ("native_direct",))} |   # sys's and builtins' order: RL-1061
-                                                          {("e04writes", (row,)) for row in ("path_clear", "path_assign")})
+                                                          {("a45more", ("native_direct",))})   # sys's and builtins' order: RL-1061
 
 
 def rows_of(probe: str) -> list[tuple[str, ...]]:

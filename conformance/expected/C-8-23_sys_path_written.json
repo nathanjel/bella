@@ -1,0 +1,12 @@
+{
+ "case": "C-8-23_sys_path_written.py",
+ "clause": "C-8-23",
+ "spec": "section 8",
+ "status": "P1",
+ "source": "the author's decision of 2026-11-28 (Question 56): writes to sys.path, and the search an import makes after one",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "False True\njson [1, \"a\"]\nModuleNotFoundError no_module_on_any_entry\nTrue True\n",
+ "stderr": "",
+ "exit_code": 0
+}

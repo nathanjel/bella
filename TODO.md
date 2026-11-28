@@ -766,8 +766,8 @@ author has seen the measurement. In this order:
   RL-992, RL-1048, RL-1050, RL-1052, RL-1012, RL-1025, RL-1043, RL-1065 to RL-1068, RL-1094, RL-1058 and RL-1063 done 2026-11-27,
   RL-1013 with RL-1102 part 1 (Question 54, answered A on 2026-11-28: writes to `sys.modules` \[P1\], a second module
   object of a built-in module stops, E-04, spec v0.50), RL-1102's `sys.meta_path` (Question 55, answered A: an import that
-  would search a changed list stops), its rest (writes to `sys.path`, which an import does not see, Question 56, and a
-  program's own staged `eval`, Question 57; its stops' words fixed), RL-1040 and
+  would search a changed list stops) and `sys.path` (Question 56, answered B: writes \[P1\], the live list searched,
+  spec v0.51), its rest (a program's own staged `eval`, Question 57; its stops' words fixed), RL-1040 and
   RL-1049 to the author; RL-1053, RL-1057, RL-1059 and RL-1062 with the steps before): ~~RL-1037 (`fromhex` on a subclass)~~, RL-1043 (a class
   with no MRO as a base), RL-1044 (`__firstlineno__` after `__module__` is assigned), RL-1052 (`dir(x)` and a name's
   `__lt__`), RL-1053 (`__qualname__` inside a generator expression), RL-1054 (`repr` of a class without a module),

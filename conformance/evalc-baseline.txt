@@ -220,6 +220,7 @@ C-8-19_the_compilers_warnings_at_each_start.py
 C-8-20_data_deeper_than_the_native_stack.py
 C-8-21_the_stack_a_program_is_given.py
 C-8-22_the_import_systems_frames.py
+C-8-23_sys_path_written.py
 C-9-01_cyclic_disposal_order.py
 C-9-02_cyclic_resurrection.py
 C-9-03_refcount_disposal_order.py

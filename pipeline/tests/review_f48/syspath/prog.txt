@@ -1,0 +1,69 @@
+"""Question 56: writes to sys.path, and the search an import makes after one, a row a process: what a compiled program
+finds as CPython does, and where CPython's search would load a file the build did not compile, or what it finds is not
+known, the stop by name."""
+import importlib
+import os
+import sys
+
+row = sys.argv[1]
+here = os.path.dirname(os.path.abspath(__file__))
+lib = os.path.join(here, "lib")
+
+
+def reach() -> None:                             # what the build compiles: the program's t_mod and the standard library's json
+    import json  # noqa: F401
+    import t_mod  # noqa: F401
+
+
+def show(name: str) -> None:
+    try:
+        module = importlib.import_module(name)
+        print(name, getattr(module, "where", module.__name__))
+    except ImportError as error:
+        print("raised", type(error).__name__, error.name)
+
+
+if row == "own_insert":                          # the program's directory again: what the program already had
+    sys.path.insert(0, here)
+    show("t_mod")
+elif row == "dot_insert":                        # '' is the current directory, here the program's
+    sys.path.insert(0, "")
+    show("t_mod")
+elif row == "nowhere":                           # an entry that does not exist is passed over
+    sys.path.insert(0, "nowhere")
+    show("t_mod")
+elif row == "removed_back":                      # taken off and put back at the end
+    sys.path.remove(here)
+    sys.path.append(here)
+    show("t_mod")
+elif row == "cache_none":                        # sys.path_importer_cache says the entry has no finder
+    sys.path_importer_cache[lib] = None
+    sys.path.insert(0, lib)
+    show("t_mod")
+elif row == "portion_first":                     # a namespace portion before the program's regular module
+    sys.path.insert(0, os.path.join(here, "ns"))
+    show("t_mod")
+elif row == "absent_everywhere":                 # nothing on the list holds it
+    sys.path.append(os.path.join(here, "ns", "t_mod"))
+    show("not_on_any_entry")
+elif row == "shadow":                            # a file of the same name before the program's directory
+    sys.path.insert(0, lib)
+    show("t_mod")
+elif row == "lib_only":                          # a module only an appended entry holds
+    sys.path.append(lib)
+    show("only_lib")
+elif row == "stdlib_after":                      # after the program's directory: before or after the standard library's?
+    sys.path.append(lib)
+    show("json")
+elif row == "cleared":                           # the program's directory gone
+    sys.path.clear()
+    show("t_mod")
+elif row == "file_entry":                        # an entry that is a file: zipimport's
+    sys.path.insert(0, os.path.join(here, "t_mod.py"))
+    show("t_mod")
+elif row == "portion_only":                      # only namespace portions: a namespace package
+    sys.path.append(os.path.join(here, "ns"))
+    show("t_mod2")
+else:
+    raise SystemExit("no such row: " + row)
+print("end", row)

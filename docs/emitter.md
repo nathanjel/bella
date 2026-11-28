@@ -340,7 +340,10 @@ but for a second module object of a built-in module, which `_imp.create_builtin`
 (E-04: the runtime's built-in module is one object, made once, and only handing it out a second
 time stops, so the module the runtime made for its own use is the first import's). An import
 that would search a `sys.meta_path` the program changed stops by name too (E-04, Question 55):
-the registry stands for the start's three finders, which the check compares by identity. So
+the registry stands for the start's three finders, which the check compares by identity. Writes
+to `sys.path` are [P1] (spec v0.51): while the list is the program's directory the registry answers,
+and after a write the registry's find searches the live list on the run's files, using the compiled
+module where the search finds the file the build compiled (`search_changed_path`, Question 56). So
 `pipeline/tests/test_compiled_imports.py` covers those paths, and case C-8-10 stays inside the
 dialect. What a hook alone could see of
 CPython's C code importing `_io` to read a module's file has no counterpart here.
