@@ -767,10 +767,9 @@ author has seen the measurement. In this order:
   CPython's 120 names with 113 in other places, `vars(sys)` 70 of them with 65 elsewhere (the other 50 are the
   names-baseline's), and `builtins` differs too (RL-492); the F48 row `a45more` `native_direct` is in `OPEN` for it.
   Order the two by CPython's tables, as the other native modules are, a case first.
-* **Promises stronger than CPython's** (the author's rule of 2026-11-28, Question 58): read the spec for a guarantee
-  stronger than what CPython itself gives, in its documents and its behaviour (as "a complete collection" was: CPython
-  leaves what its finalisers make to a later one), and word each as what a program may rely on when run uncompiled;
-  exactness where CPython does a thing stays. Put the list to the author before changing words.
+* ~~**Promises stronger than CPython's** (the author's rule of 2026-11-28, Question 58)~~: done the same day (Question
+  65): section 2's tables, section 9, and every "never", "always", "complete", "exactly" and "guarantee" read; the
+  promises of that kind were those Questions 58 to 61 corrected, and `__subclasses__()`' "complete" (spec v0.60).
 * **Section 4's compile-time refusals** (RL-1102, 2026-11-28): what the compiler sees of E-02 to E-04 in the program's
   own text (`sys.set_lazy_imports(...)`, `sys.meta_path.insert(...)`, `importlib.reload(...)`, `sys._getframe()`) is to
   be a compile-time error with the id, as section 4 says; today only E-06's text is, and the rest stop at run time
