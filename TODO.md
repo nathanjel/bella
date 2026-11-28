@@ -864,15 +864,20 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   it runs: RL-702 and RL-583, done 2026-11-23 for the preludes' functions with a later converted argument. Of the nine
   \[P1\] cases outside the compiled baseline six are left, all waiting for the collector.
 * **All of a one-dimensional view of octets (the author, Question 40, 2026-11-24: B, "it needs to be solid early on";
-  spec v0.36; DECISIONS). Before the 1c ports that need it (socket).** Case first, CPython passing: `hex` (with a
-  separator and bytes per separator), `count`, `index`, `toreadonly`, `__buffer__` and `__release_buffer__`, item and
-  slice assignment through a view of a bytearray (lengths that differ are a ValueError, a read-only view a TypeError),
-  a view as a buffer written into (`readinto` of FileIO, BytesIO and the buffered classes, `socket.recv_into` and
-  `recvfrom_into`, `struct.pack_into`, `os.readv`, `os.preadv`, and the rest CPython writes into: sweep the preludes for
-  `w*` arguments), each holding the export while it writes (RL-702's hold, the model first if the hold changes), and a
-  buffered stream handing a program's own `readinto` a memoryview over its buffer, released after the call, as CPython's
-  does (found 2026-11-24: the prelude hands a bytearray; `type(b).__name__` differs). `__sizeof__` with Question 35's
-  step. The stops' rows (`tools/missing_names.py --update`, and the tests that hold a stop by name).
+  spec v0.36; widened by Question 62, 2026-11-28: A, spec v0.57; DECISIONS).** Case first, CPython passing: `hex` (with a
+  separator and bytes per separator), `count`, `index`, `toreadonly`, `cast` to a one-byte format (`B`, `b`, `c`; RL-994),
+  `__buffer__` and `__release_buffer__` of the view and of `bytes` and `bytearray`, and `collections.abc.Buffer` for the
+  three (RL-997), item and slice assignment through a view of a `bytearray` (lengths that differ are a ValueError, a
+  read-only view a TypeError), `io.BytesIO.getbuffer()` with its export (a `BytesIO` with a view out refuses to resize,
+  BufferError; `hashlib.file_digest` of a `BytesIO` then runs; RL-995), a view as a buffer written into (`readinto` of
+  FileIO, BytesIO and the buffered classes, `struct.pack_into`, `os.readv`, `os.preadv`, and the rest CPython writes into:
+  sweep the preludes for `w*` arguments; sockets' `recv_into` are \[P2+\], RL-996), each holding the export while it
+  writes (RL-702's hold, the model first if the hold changes), and a buffered stream handing a program's own raw
+  `readinto` a memoryview over its buffer and its raw `write` a read-only one (RL-991; `bufferedio.c:1628-1642`,
+  `1976-1996`), not released after the call: CPython only drops its reference, so a kept view stays usable with `obj`
+  None and aliases the stream's buffer (RL-993; the prelude hands a bytearray and a bytes today). `__sizeof__` with
+  Question 35's step. The stops' rows (`tools/missing_names.py --update`, and the tests that hold a stop by name); the F48
+  rows `viewsmore` `BufferedRandom.write` (in `OPEN`) come out of `OPEN` with it.
 * **What a frame object does not have yet (left by RL-222, 2026-11-23).** A frame object is shared by a frame's traceback entries
   and takes the frame's values when it is over, but: (a) `traceback.walk_stack` (and the signal handler's frame) make a new
   frame object at each asking, not the frame's own, so holding one keeps nothing (CPython's would keep the values past the
